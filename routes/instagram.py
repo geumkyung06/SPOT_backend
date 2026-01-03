@@ -4,7 +4,7 @@ from flask import Blueprint, request, jsonify
 from services import instagram_parser
 from services import check_place
 # models 파일에서 정의한 클래스들 임포트
-from models import db, Place, InstaUrl, PlaceArea, UrlPlace 
+from models import db, Place, InstaUrl, UrlPlace 
 
 bp = Blueprint('instagram', __name__, url_prefix='/api/instagram')
 
@@ -53,26 +53,6 @@ def analyze_instagram():
 
         for p_info in verified_places:
             if not p_info.get('name'): continue
-
-            # ---------------------------------------------------
-            # [Step 2] PlaceArea (지역) 확인 및 생성
-            # ---------------------------------------------------
-            area_name = extract_area_name(p_info['address'])
-            
-            # 이미 존재하는 지역인지 확인
-            area = PlaceArea.query.filter_by(name=area_name).first()
-            
-            if not area:
-                # 없으면 새로 생성
-                area = PlaceArea(
-                    name=area_name,
-                    latitude=p_info['latitude'],  # 해당 지역 첫 장소의 좌표를 지역 중심으로 사용 (임시)
-                    longitude=p_info['longitude'],
-                    radiusm=1000.0 # 기본 반경 1km 설정
-                )
-                db.session.add(area)
-                db.session.flush() # area.id 생성
-                print(f"   └─ [New Area] 지역 생성: {area.name}")
             
             # ---------------------------------------------------
             # [Step 3] Place (장소) 저장/조회
@@ -90,7 +70,6 @@ def analyze_instagram():
                     latitude=p_info['latitude'],
                     longitude=p_info['longitude'],
                     photo=thumbnail_path,
-                    area_id=area.id, # [중요] 위에서 구한 area.id 연결
                     rating_avg=0.0,
                     rating_count=0,
                     saved_count=0
@@ -98,10 +77,6 @@ def analyze_instagram():
                 db.session.add(place)
                 db.session.flush() # place.id 생성
                 print(f"   └─ [New Place] 장소 저장: {place.name}")
-            else:
-                # 이미 존재하면 area_id가 비어있을 경우 업데이트
-                if not place.area_id:
-                    place.area_id = area.id
 
             # ---------------------------------------------------
             # [Step 4] UrlPlace (매핑) 저장

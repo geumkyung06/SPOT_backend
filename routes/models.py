@@ -15,7 +15,7 @@ class InstaUrl(db.Model):
     image = db.Column(db.String(255))    # 썸네일
     texts = db.Column(db.Text)           # Text?
 
-# 2. 장소 테이블 (기존 코드 유지 + area_id 추가)
+# 2. 장소 테이블
 class Place(db.Model):
     __tablename__ = 'place'
 
@@ -34,9 +34,6 @@ class Place(db.Model):
     rating_avg = db.Column(db.Float, default=0.0)
     rating_count = db.Column(db.Integer, default=0)
     saved_count = db.Column(db.Integer, default=0)
-    
-    # [NEW] PlaceArea와 연결
-    area_id = db.Column(db.BigInteger, db.ForeignKey('place_area.id'))
 
 # 3. 매핑 테이블 (인스타URL <-> 장소)
 class UrlPlace(db.Model):
