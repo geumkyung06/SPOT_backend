@@ -47,8 +47,6 @@ class UrlPlace(db.Model):
     instaurl_id = db.Column(db.BigInteger, db.ForeignKey('insta_url.id'))
     placeid_id = db.Column(db.BigInteger, db.ForeignKey('place.id'))
 
-db = SQLAlchemy()
-
 # 4. saved_place table
 class SavedPlace(db.Model):
     __tablename__ = 'saved_place'
@@ -58,7 +56,7 @@ class SavedPlace(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
     
     user_id = db.Column(db.BigInteger, nullable=False)  # 유저 ID
-    place_id = db.Column(db.BigInteger, db.ForeignKey('places.id'), nullable=False) # 장소 ID
+    place_id = db.Column(db.BigInteger, db.ForeignKey('place.id'), nullable=False) # 장소 ID
     
     rating = db.Column(db.Integer, default=0)           # 유저 별점
     save_type = db.Column(db.String(255), default="spot") # 저장 유형 (instagram, spot)
