@@ -8,3 +8,4 @@ trash/
 services/temp_images/
 static/uploads/*
 !static/uploads/.gitkeep
+routes/instagram_re.py
