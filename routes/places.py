@@ -24,14 +24,23 @@ def save_user_places():
         schema:
           type: object
           properties:
+            save_type:
+              type: string
+              example: "instagram"
             place_ids:
               type: array
               items:
                 type: integer
-              example: [1, 2]
+              example:
+                - 1
+                - 2
     responses:
       200:
         description: 저장 성공
+      400:
+        description: 잘못된 요청
+      500:
+        description: 서버 에러
     """
     
     try:

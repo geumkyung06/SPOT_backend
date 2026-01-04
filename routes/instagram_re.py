@@ -17,27 +17,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 @bp.route('/analyze', methods=['POST'])
 def analyze_instagram():
-    """
-    인스타그램 URL 분석
-    ---
-    tags:
-      - Instagram
-    parameters:
-      - name: body
-        in: body
-        required: true
-        schema:
-          type: object
-          properties:
-            url:
-              type: string
-              example: "https://www.instagram.com/p/..."
-    responses:
-      200:
-        description: 분석 성공
-      500:
-        description: 서버 에러
-    """
     try:
         data = request.get_json()
         url = data.get('url')
@@ -60,42 +39,16 @@ def analyze_instagram():
 
         saved_imgs = gpt_result.get('saved_images', [])
         
-        if saved_imgs and len(saved_imgs) > 0:
-            thumbnail_path = saved_imgs[0]
-        else:
-            thumbnail_path = None # 이미지가 없으면 None으로 설정
+        if saved_imgs and len(saved_imgs) <= 0:
             print("[Warning] 분석 결과에서 이미지를 찾을 수 없습니다.")
 
         caption_text = gpt_result.get('caption', '') 
-
-
-# 이미지 저장 X 안해도 됨
-        # 파일 이동 로직을 위한 변수 설정
-        temp_path = thumbnail_path  # 위에서 구한 값을 그대로 사용
-        final_path = None
-        
-        if temp_path and os.path.exists(temp_path):
-            # 1. 고유한 파일명 생성 (중복 방지)
-            ext = temp_path.split('.')[-1] 
-            new_filename = f"{uuid.uuid4()}.{ext}"
-            
-            # 2. 이동할 전체 경로
-            destination = os.path.join(UPLOAD_FOLDER, new_filename)
-            
-            # 3. 파일 이동 (temp -> static/uploads)
-            shutil.move(temp_path, destination)
-            
-            # 4. DB에 저장할 경로
-            final_path = f"/static/uploads/{new_filename}"
-            
-            print(f"[Image] 영구 저장 완료: {final_path}")
         
         # -------------------------------------------------------
         # [Step 1] InstaUrl 테이블 저장
         # -------------------------------------------------------
         new_insta = InstaUrl(
             url=url,
-            image=final_path,
             texts=caption_text # 캡션 전체 저장
         )
         db.session.add(new_insta)
@@ -125,7 +78,6 @@ def analyze_instagram():
                     list=p_info['category'],
                     latitude=p_info['latitude'],
                     longitude=p_info['longitude'],
-                    photo=final_path,
                     rating_avg=0.0,
                     rating_count=0,
                     saved_count=0
