@@ -13,14 +13,10 @@ def _auth_guard():
 @user_places_bp.route("/places", methods=["POST"])
 def save_user_places():
     """
-    유저 '저장한 장소'에 저장 (북마크)
+    장소 보관함 저장
     ---
     tags:
-      - saved_place
-    summary: 장소 ID 리스트를 받아 '저장한 장소'에 저장
-    description: >
-      body에 `place_ids` (숫자 리스트) 또는 `places` (객체 리스트) 중 하나를 담아서 요청
-      이미 저장된 장소는 중복 저장하지 않음
+      - User Places
     parameters:
       - name: body
         in: body
@@ -28,43 +24,14 @@ def save_user_places():
         schema:
           type: object
           properties:
-            save_type:
-              type: string
-              example: "instagram"
-              description: 저장 출처/유형 (기본값 spot)
             place_ids:
               type: array
               items:
                 type: integer
-              example: [1, 2, 3]
-              description: "저장할 장소 ID 리스트"
-            places:
-              type: array
-              items:
-                type: object
-                properties:
-                  place_id:
-                    type: integer
-              description: "저장할 장소 객체 리스트"
+              example: [1, 2]
     responses:
       200:
         description: 저장 성공
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: "success"
-            saved_count:
-              type: integer
-              example: 2
-            message:
-              type: string
-              example: "2개의 장소가 저장되었습니다."
-      400:
-        description: 장소 ID가 제공되지 않음
-      500:
-        description: 서버 에러
     """
     
     try:
@@ -131,9 +98,24 @@ def save_user_places():
 @user_places_bp.route("/", methods=["GET"])
 def list_my_places():
     """
-    [GET] /places/?page=1&size=20
-    내가 저장한 장소 목록 조회 (Place 정보 포함)
+    보관함 장소 목록 조회
+    ---
+    tags:
+      - User Places
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        default: 1
+      - name: size
+        in: query
+        type: integer
+        default: 20
+    responses:
+      200:
+        description: 조회 성공
     """
+
     try:
         user_id = g.user_id
         page = int(request.args.get("page", 1))
