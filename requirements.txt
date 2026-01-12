@@ -4,6 +4,7 @@ Flask-SQLAlchemy
 Flask-CORS
 flask_jwt_extended
 flasgger
+gunicorn
 
 # Database Drivers
 PyMySQL
