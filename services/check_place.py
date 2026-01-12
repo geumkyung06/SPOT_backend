@@ -18,7 +18,7 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 #NCP_CLIENT_ID = os.getenv("NCP_MAP_CLIENT_ID") 
 #NCP_CLIENT_SECRET = os.getenv("NCP_MAP_CLIENT_SECRET")
 
-# ---------- [핵심] 카테고리 매핑 함수 ----------
+# 카테고리 매핑 : 'accessory','bar','cafe','cloth','etc','restaurant','dessert','exhibition','experience'
 def _map_google_category(google_types: list) -> str:
     """
     구글 Places API Types -> 내 앱 9개 카테고리로 매핑
@@ -35,15 +35,15 @@ def _map_google_category(google_types: list) -> str:
         "amusement_park", "aquarium", "bowling_alley", "campground",
         "movie_theater", "zoo", "park", "tourist_attraction", "stadium"
     ]):
-        return "activity"
+        return "experience"
 
     # 3. 소품샵 
     if any(t in types_set for t in ["home_goods_store", "book_store", "florist", "furniture_store"]):
-        return "prop_shop"
+        return "accessory"
 
     # 4. 옷가게 
     if any(t in types_set for t in ["clothing_store", "shoe_store", "jewelry_store", "shopping_mall", "department_store"]):
-        return "clothing_store"
+        return "cloth"
 
     # 5. 디저트 
     if "bakery" in types_set:
@@ -64,7 +64,6 @@ def _map_google_category(google_types: list) -> str:
     # 9. 기타
     return "etc"
 
-# ---------- 유틸 함수 ----------
 def _norm_text(s: str) -> str:
     if not s: return ""
     s = s.lower().replace("<b>", "").replace("</b>", "")
@@ -80,7 +79,7 @@ def _simplify_address(addr: str) -> str:
     return s.strip()
 
 
-# ---------- API 호출 ----------
+# 네이버 검색 api
 def _search_naver_local(query: str) -> dict:
     """네이버 지역 검색 (이름/주소 검증)"""
     if not SEARCH_CLIENT_ID or not SEARCH_CLIENT_SECRET:
@@ -141,54 +140,43 @@ def _get_google_place_info(name: str, address: str):
     return None, None, []
 
 
-# ---------- 메인 로직 ----------
-def check_place_on_naver(gpt_results: list[list[str]]) -> list[dict]:
+# 메인 로직
+def check_place_on_naver(places: list[str]) -> list[dict]:
+    found_item = []
     confirmed = []
 
-    for name, address in gpt_results:
-        if not name or "no_name" in name.lower():
-            continue
-
-        # 1. [네이버] 장소 실존 여부 및 정확한 한국어 명칭/주소 확보
-        simple_addr = _simplify_address(address)
-        query = f"{name} {simple_addr}" if simple_addr else name
-        
-        resp = _search_naver_local(query)
+    for place_query in places:
+        resp = _search_naver_local(place_query)
         items = resp.get("items", [])
         
-        found_item = None
-        
-        # 네이버 결과 중 가장 유사한 것 찾기 (기존 로직 유지)
         if items:
-            best_candidate = None
-            max_score = 0.0
-            clean_gpt_name = _norm_text(name)
-
-            for item in items:
-                clean_naver_name = _norm_text(item['title'])
-                naver_addr = item.get("roadAddress") or item.get("address") or ""
-                
-                sim = SequenceMatcher(None, clean_gpt_name, clean_naver_name).ratio()
-                if simple_addr and simple_addr in naver_addr:
-                    sim += 0.2 # 주소 보너스
-                
-                if sim > max_score:
-                    max_score = sim
-                    best_candidate = item
+            best_item = items[0] 
             
-            # 임계값 (이름+주소 맞으면 보통 0.5 넘음)
-            if best_candidate and max_score >= 0.5:
-                found_item = best_candidate
+            # HTML 태그 제거 (<b> 등)
+            clean_title = re.sub(r'<[^>]+>', '', best_item['title'])
+            
+            found_item.append({
+                "query": place_query,          # 원래 검색어
+                "title": clean_title,          # 네이버 공식 명칭
+                "address": best_item['address'], # 지번 주소
+                "roadAddress": best_item['roadAddress'], # 도로명 주소
+                "mapx": best_item['mapx'],     # 좌표 X
+                "mapy": best_item['mapy']      # 좌표 Y
+            })
+            print(f"확인됨: {clean_title}")
+            
+        else:
+            print(f"검색 실패: {place_query}")
 
-        # 2. [구글] 좌표 및 카테고리 확보
+        # 2. 좌표 및 카테고리 확보
         if found_item:
             final_name = found_item["title"].replace("<b>", "").replace("</b>", "")
             final_addr = found_item.get("roadAddress") or found_item.get("address")
             
-            # 구글 API 호출 (좌표 + types)
+            # 구글 API 호출 - 좌표 + types
             lat, lng, google_types = _get_google_place_info(final_name, final_addr)
             
-            # [핵심] 구글 types -> 내 앱 카테고리(7개)로 매핑
+            #  구글 types -> 내 앱 카테고리(9개)로 매핑
             my_category = _map_google_category(google_types)
 
             place_obj = {
@@ -197,7 +185,7 @@ def check_place_on_naver(gpt_results: list[list[str]]) -> list[dict]:
                 "category": my_category,  # 매핑된 카테고리 (ex: "cafe", "restaurant")
                 "latitude": lat,          
                 "longitude": lng,
-                "original_types": google_types # (디버깅용) 구글 원본 타입
+                "original_types": google_types # (디버깅용) 구글 원본 타입, 제대로 됐는지
             }
             confirmed.append(place_obj)
             
@@ -206,6 +194,6 @@ def check_place_on_naver(gpt_results: list[list[str]]) -> list[dict]:
             print(f"   └─ 좌표: {lat}, {lng}")
 
         else:
-            print(f"검증 실패: {name} (네이버 검색 결과 없음)")
+            print(f"검증 실패: {place_query} (네이버 검색 결과 없음)")
 
     return confirmed
