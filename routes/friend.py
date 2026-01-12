@@ -468,6 +468,8 @@ def get_friend_comments(friend_id):
     ---
     tags:
       - Friend
+    security:
+      - Bearer: []
     parameters:
       - name: friend_id
         in: path
@@ -477,48 +479,78 @@ def get_friend_comments(friend_id):
       - name: sort
         in: query
         type: string
-        description: 정렬 기준 (기본값 latest)
+        description: 정렬 기준 (latest)
         default: latest
     responses:
       200:
         description: 코멘트 조회 성공
-
+        schema:
+          type: object
+          properties:
+            friendId:
+              type: integer
+            count:
+              type: integer
+            comments:
+              type: array
+              items:
+                type: object
+                properties:
+                  commentId:
+                    type: integer
+                  content:
+                    type: string
+                  createdAt:
+                    type: string
+                  isLiked:
+                    type: boolean
+                    description: 내가 이 장소를 좋아요(place_like) 했는지 여부
+                  place:
+                    type: object
+                  photos:
+                    type: array
     """
-
-    # 리스폰스 result 내용 보내는 거 수정
-    # 하트 구현
-
+    
+    # 1. 내 아이디 (장소 좋아요 여부 체크용)
+    current_user_id = get_jwt_identity()
+    
     sort = request.args.get('sort', 'latest') 
 
     db = get_db()
-    cursor = db.cursor() # DictCursor는 get_db()에서 설정됨
+    cursor = db.cursor()
 
-    # 정렬 기준
     order_by = "c.id DESC" 
 
-    # comments -> pins -> place 조인
     query = f"""
         SELECT 
             c.id AS comment_id,
-            c.content AS comment,
-            c.user_id,
+            c.content,
+            c.created_at,
             p.id AS place_id,
             p.name AS place_name,
             p.address AS place_address,
-            p.photo AS place_thumbnail
+            p.list AS place_category,
+            p.photo AS place_thumbnail,
+            CASE WHEN pl.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_liked
         FROM comments c
+        JOIN kakao_mem k ON c.user_id = k.id
         LEFT JOIN pins pin ON c.pin_id = pin.id
         LEFT JOIN place p ON pin.place_id = p.id
+        LEFT JOIN place_like pl 
+               ON p.id = pl.placeid_id AND pl.userid_id = %s
         WHERE c.user_id = %s
         ORDER BY {order_by}
     """
     
-    cursor.execute(query, (friend_id,))
+    # 나 : 하트 체크, 친구 : 조회
+    cursor.execute(query, (current_user_id, friend_id))
     comments = cursor.fetchall()
 
-    # 사진 가져오기 (photos 테이블)
     results = []
+    
+    # 3. 데이터 가공
     for c in comments:
+        # 사진 가져오기
         cursor.execute("""
             SELECT url FROM photos
             WHERE comment_id = %s
@@ -528,16 +560,22 @@ def get_friend_comments(friend_id):
         photo_urls = [row['url'] for row in photo_rows]
 
         results.append({
-            "comment_id": c["comment_id"],
-            "comment": c["comment"],
+            "commentId": c["comment_id"],
+            "content": c["content"],
+            "createdAt": c["created_at"],
+            "isLiked": bool(c["is_liked"]), 
             "place": {
-                "place_id": c.get("place_id"),
+                "placeId": c.get("place_id"),
                 "name": c.get("place_name"),
                 "address": c.get("place_address"),
-                "thumbnail_url": c.get("place_thumbnail")
+                "category": c.get("place_category"),
+                "thumbnailUrl": c.get("place_thumbnail")
             },
             "photos": photo_urls
         })
 
-    return jsonify({"friend_id": friend_id, "comments": results}), 200
-
+    return jsonify({
+        "friendId": friend_id, 
+        "count": len(results),
+        "comments": results
+    }), 200

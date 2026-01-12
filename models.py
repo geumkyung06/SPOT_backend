@@ -106,3 +106,14 @@ class Friend(db.Model):
     
     member_id = db.Column(db.BigInteger, nullable=True)  
     
+# 7. place_like -> 하트
+class PlaceLike(db.Model):
+    __tablename__ = 'place_like'
+    
+    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    placeid_id = db.Column(db.BigInteger, nullable=False)
+    userid_id = db.Column(db.BigInteger, nullable=False)
+
