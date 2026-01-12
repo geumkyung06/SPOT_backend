@@ -30,15 +30,21 @@ def close_db(e=None):
 @jwt_required()
 def get_friends_list():
     """
-    친구 목록 전체 조회
+    친구 목록 조회 및 상세 조회 통합
     ---
     tags:
       - Friend
     security:
       - Bearer: []
+    parameters:
+      - name: friend_id
+        in: query
+        type: integer
+        required: false
+        description: 특정 친구의 ID (입력 시 해당 친구 상세 정보 반환, 미입력 시 전체 목록 반환)
     responses:
       200:
-        description: 친구 목록 반환 성공
+        description: 조회 성공
         schema:
           type: object
           properties:
@@ -46,36 +52,44 @@ def get_friends_list():
               type: array
               items:
                 type: object
-                properties:
-                  friend_id:
-                    type: integer
-                  nickname:
-                    type: string
-                  profile_url:
-                    type: string
-                  updated_at:
-                    type: string
+            friend:
+              type: object
     """
     user_id = get_jwt_identity()
-
+    
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
+
+    target_friend_id = request.args.get('friend_id')
 
     db = get_db()
     cursor = db.cursor()
 
-    # friend 테이블(member_id, friend_id) JOIN kakao_mem(id, photo, nickname)
-    query = """
-        SELECT f.friend_id AS friend_id, k.nickname, k.photo AS profile_url, f.updated_at
+    base_query = """
+        SELECT k.id AS friend_id, 
+               k.spot_nickname AS nickname, 
+               k.photo AS profile_url, 
+               k.info AS comment, 
+               k.email, 
+               f.updated_at
         FROM friend f
         JOIN kakao_mem k ON f.friend_id = k.id
         WHERE f.member_id = %s
-        ORDER BY f.updated_at DESC
     """
-    cursor.execute(query, (user_id,))
-    friends = cursor.fetchall()  
 
-    return jsonify({'friends': friends}), 200
+    try:
+      # 전체 목록 조회
+      query = " ORDER BY f.updated_at DESC"
+      cursor.execute(query, (user_id,))
+      friends = cursor.fetchall()
+
+      return jsonify({'friends': friends}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+
 
 
 # 특정 친구 상세 정보 조회 = 특정 친구 프로필 확인
