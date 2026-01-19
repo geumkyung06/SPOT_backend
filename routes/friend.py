@@ -30,7 +30,7 @@ def close_db(e=None):
         db.close()
 
 # 친구 목록 전체 조회
-# Q. 추가해야하는 목록: 공통 친구수, 공통친구 프로필 3개(업데이트순), follow t/f
+# Q. 추가해야하는 목록: 공통 친구수, 공통친구 프로필 3개(업데이트순)
 @bp.route('/friends/list', methods=['GET'])
 @jwt_required()
 def get_friends_list():
@@ -66,9 +66,9 @@ def get_friends_list():
                     comment:
                       type: string
                       description: 상태 메시지 (info)
-                    email:
+                    spot_id:
                       type: string
-                      description: 이메일( 이후 spot_id 로 변경 필요)
+                      description: spot_id
                     status:
                       type: string
                       description: 친구 상태(block','friend','give','waiting')
@@ -91,7 +91,7 @@ def get_friends_list():
                k.spot_nickname AS nickname, 
                k.photo AS profile_url, 
                k.info AS comment, 
-               k.email, 
+               k.spot_id, 
                f.updated_at,
                f.status
         FROM friend f
@@ -366,7 +366,6 @@ def post_friend_unblock(friend_id):
         db.rollback()
         return jsonify({"error": str(e)}), 500
     
-
 # 친구가 저장한 장소 목록 조회
 @bp.route('/main/places/<int:friend_id>', methods=['GET'])
 @jwt_required()
@@ -527,7 +526,6 @@ def get_friend_places(friend_id):
 
     return jsonify(result_places), 200
 
-
 # 친구가 남긴 코멘트 전체 조회
 @bp.route('/main/comment/<int:friend_id>', methods=['GET'])
 @jwt_required()
@@ -651,7 +649,6 @@ def get_friend_comments(friend_id):
         "comments": results
     }), 200
 
-
 # 친구 팔로우 요청하기
 @bp.route('/friends/follow/<int:friend_id>', methods=['POST'])
 @jwt_required()
@@ -708,12 +705,26 @@ def post_request_follow(friend_id):
         if existing_relation:
             return jsonify({'message': f"Already {existing_relation['status']} status"}), 409
 
-        # DB에 'waiting' 상태로 저장
-        sql_insert = """
-            INSERT INTO friend (member_id, friend_id, status, created_at) 
-            VALUES (%s, %s, 'waiting', NOW())
+        # 상대방 상태엔 DB에 'waiting' 상태로 저장
+        waiting_query = """
+            INSERT INTO friend (member_id, friend_id, status, created_at, updated_at) 
+            VALUES (%s, %s, 'waiting', NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                status = 'waiting',
+                updated_at = NOW()
         """
-        cursor.execute(sql_insert, (user_id, friend_id))
+        cursor.execute(waiting_query, (friend_id, user_id))
+
+        # 내가 보낸 건 DB에 'give' 상태로 저장
+        giving_query = """
+            INSERT INTO friend (member_id, friend_id, status, created_at, updated_at) 
+            VALUES (%s, %s, 'give', NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                status = 'give',
+                updated_at = NOW()
+        """
+        cursor.execute(giving_query, (user_id, friend_id))
+        
         db.commit()
 
         return jsonify({'message': 'Send follow', 'friend_id': friend_id}), 201
@@ -777,13 +788,19 @@ def post_accept_follow(friend_id):
         if not request_exist:
             return jsonify({'message': 'There are no pending follow requests'}), 404
 
-        # 상태를 'friend'로 업데이트
-        cursor.execute("""
-            UPDATE friend
-            SET status = 'friend', updated_at = NOW()
-            WHERE member_id = %s AND friend_id = %s
-        """, (friend_id, user_id))
-
+        # 상태를 'friend'로 업데이트 (팔로우 허락)
+        giving_query = """
+        UPDATE friend
+        SET status = 'friend', updated_at = NOW()
+        WHERE member_id = %s AND friend_id = %s AND status = 'give'
+        """
+        cursor.execute(giving_query, (friend_id, user_id))
+        
+        waiting_query = """
+        DELETE FROM friend
+            WHERE member_id = %s AND friend_id = %s AND status = 'waiting'
+        """
+        cursor.execute(waiting_query, (user_id, friend_id))
         db.commit()
 
         return jsonify({'message': 'Follow access', 'friend_id': friend_id}), 200
@@ -834,11 +851,17 @@ def post_decline_follow(friend_id):
     cursor = db.cursor()
 
     try:
-        query = """
-            DELETE FROM friend
-            WHERE member_id = %s AND friend_id = %s AND status = 'waiting'
+        waiting_query = """
+        DELETE FROM friend
+        WHERE member_id = %s AND friend_id = %s AND status = 'waiting'
         """
-        cursor.execute(query, (friend_id, user_id))
+        cursor.execute(waiting_query, (friend_id, user_id))
+
+        giving_query = """
+            DELETE FROM friend
+            WHERE member_id = %s AND friend_id = %s AND status = 'give'
+        """
+        cursor.execute(giving_query, (user_id, friend_id))
         db.commit()
 
         if cursor.rowcount == 0:
