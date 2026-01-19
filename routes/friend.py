@@ -1,8 +1,12 @@
 import os
 import pymysql
+import random
+
 from flask import Blueprint, jsonify, request, g
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from dotenv import load_dotenv
+
+from models import db, PlaceLike, Place, Friend
 
 load_dotenv()
 
@@ -197,7 +201,7 @@ def post_friend_report(friend_id):
     cursor = db.cursor()
 
     try:
-        # kakao_mem 테이블의 id를 참조하는 user_report 테이블 사용
+        # kakao_mem 테이블의 id를 참조하는 user_report 테이블 필요할 듯?
         query = """
             INSERT INTO user_report (reporter_id, reported_id, reason, created_at)
             VALUES (%s, %s, %s, NOW())
@@ -246,13 +250,16 @@ def post_friend_block(friend_id):
     try:
         # 1. 차단 목록 status update
         # member_id, friend_id, status 순서로 매핑
-        insert_query = """
+        query = """"
         INSERT INTO friend (member_id, friend_id, status, created_at, updated_at)
         VALUES (%s, %s, 'block', NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            status = 'block',
+            updated_at = NOW()
         """
-        cursor.execute(insert_query, (user_id, friend_id))
+        cursor.execute(query, (user_id, friend_id))
 
-        # 2. 친구 목록(friend)에서 삭제 연결해야함
+        # 2. 친구 목록(friend)에서 삭제되는것?은 아닌 듯????
         '''
         delete_query = """
             DELETE FROM friend
@@ -263,7 +270,7 @@ def post_friend_block(friend_id):
         '''
         db.commit()
 
-        return jsonify({"message": "User blocked and unfriended successfully"}), 201
+        return jsonify({"message": "User blocked successfully"}), 201
 
     except pymysql.err.IntegrityError:
         return jsonify({"message": "Already blocked"}), 409
@@ -271,10 +278,66 @@ def post_friend_block(friend_id):
         db.rollback()
         return jsonify({"error": str(e)}), 500
 
+# 친구 차단 해제
+@bp.route('/friends/unblock/<int:friend_id>', methods=['POST'])
+@jwt_required()
+def post_friend_unblock(friend_id):
+    user_id = get_jwt_identity()
+
+    if not user_id:
+        return jsonify({"message": "user_id is required"}), 400
+
+    db = get_db()
+    cursor = db.cursor()
+
+    try:
+        '''# 1. 친구 관계였으면 복귀
+        # Q. 물어봐야함!!!!!!!!
+        query = """
+            SELECT status FROM friend 
+            WHERE member_id = %s AND friend_id = %s
+        """
+        cursor.execute(query, (friend_id, user_id))
+        reverse_relation = cursor.fetchone()
+
+        # 역방향 조회: member_id가 friend_id & friend_id가 user_id인 행을 찾아야 함
+        if reverse_relation and reverse_relation['status'] == 'friend':
+            restore_query = """
+                UPDATE friend 
+                SET status = 'friend', updated_at = NOW()
+                WHERE member_id = %s AND friend_id = %s AND status = 'block'
+            """
+            cursor.execute(restore_query, (user_id, friend_id))
+            msg = "Relationship restored to friend"
+  
+        else:
+            # 상대방 목록에 내가 없음 >> 관계 삭제 (DELETE)
+            delete_query = """
+                DELETE FROM friend 
+                WHERE member_id = %s AND friend_id = %s AND status = 'block'
+            """
+            cursor.execute(delete_query, (user_id, friend_id))
+            msg = "Unblocked and relationship deleted"'''
+          
+        # 2. 친구 테이블에서 아예 삭제
+        query = """
+        DELETE INTO friend (member_id, friend_id, status, created_at, updated_at)
+        VALUES (%s, %s, 'block', NOW(), NOW())
+        """
+        cursor.execute(query, (user_id, friend_id))
+
+        db.commit()
+        return jsonify({"message": "Unblocked and relationship deleted"}), 200
+
+    except pymysql.err.IntegrityError:
+        return jsonify({"message": "Already unblocked"}), 409
+    except Exception as e:
+        db.rollback()
+        return jsonify({"error": str(e)}), 500
+    
 
 # 친구가 저장한 장소 목록 조회
 @bp.route('/main/places/<int:friend_id>', methods=['GET'])
-@jwt_required()
 @jwt_required()
 def get_friend_places(friend_id):
     """
@@ -346,7 +409,7 @@ def get_friend_places(friend_id):
     sort_by = request.args.get("sort", "latest")
     category_filter = request.args.get("category")
 
-    # 유효한 카테고리 목록 : 'accessory','bar','cafe','cloth','etc','restaurant','dessert','exhibition','experience'
+    # 유효한 카테고리 목록
     valid_categories = ["accessory", "bar", "cafe", "cloth", "etc", "restaurant", "dessert", "exhibition", "experience"]
 
     db = get_db()
@@ -370,8 +433,9 @@ def get_friend_places(friend_id):
             p.rating_avg AS ratingAvg,
             p.rating_count AS ratingCount,
             sp.rating AS friendRating,
+            sp.content AS content,
             sp.updated_at,
-            k.nickname AS friend_nickname,
+            k.spot_nickname AS friend_nickname,
             k.photo AS friend_photo,
             CASE WHEN my_sp.id IS NOT NULL THEN TRUE ELSE FALSE END AS isMarked
         FROM saved_place sp
@@ -400,10 +464,12 @@ def get_friend_places(friend_id):
     cursor.execute(query, tuple(params))
     rows = cursor.fetchall()
 
-    # 3. 데이터 가공
-    # Q. comment가 없는데 이거 추가해야하는지 확인
-    result_places = []
+    # 데이터 없으면 바로 리턴
+    if not rows:
+        return jsonify([]), 200
     
+    result_places = []
+
     for row in rows:
         place_data = {
             "placeId": row['placeId'],
@@ -435,7 +501,6 @@ def get_friend_places(friend_id):
 @bp.route('/main/comment/<int:friend_id>', methods=['GET'])
 @jwt_required()
 def get_friend_comments(friend_id):
-  
     """
     친구가 남긴 코멘트 전체 조회
     ---
@@ -488,8 +553,8 @@ def get_friend_comments(friend_id):
                       type: string
     """
     
-    # 1. 내 아이디 (장소 좋아요 여부 체크용)
-    current_user_id = get_jwt_identity()
+    # 내 아이디 (장소 좋아요 여부 체크용)
+    user_id = get_jwt_identity()
     
     sort = request.args.get('sort', 'latest') 
 
@@ -511,21 +576,20 @@ def get_friend_comments(friend_id):
             CASE WHEN pl.id IS NOT NULL THEN TRUE ELSE FALSE END AS is_liked
         FROM comments c
         JOIN kakao_mem k ON c.user_id = k.id
-        LEFT JOIN pins pin ON c.pin_id = pin.id
         LEFT JOIN place p ON pin.place_id = p.id
         LEFT JOIN place_like pl 
-               ON p.id = pl.placeid_id AND pl.userid_id = %s
+              ON p.id = pl.placeid_id AND pl.userid_id = %s
         WHERE c.user_id = %s
         ORDER BY {order_by}
     """
     
     # 나 : 하트 체크, 친구 : 조회
-    cursor.execute(query, (current_user_id, friend_id))
+    cursor.execute(query, (user_id, friend_id))
     comments = cursor.fetchall()
 
     results = []
     
-    # 3. 데이터 가공
+    # 데이터 가공
     for c in comments:
         # 사진 가져오기
         cursor.execute("""
@@ -538,7 +602,7 @@ def get_friend_comments(friend_id):
 
         results.append({
             "commentId": c["comment_id"],
-            "content": c["content"],
+            "content": c["content"], # >> db column = content. (comment)
             "createdAt": c["created_at"],
             "isLiked": bool(c["is_liked"]), 
             "place": {
@@ -557,17 +621,142 @@ def get_friend_comments(friend_id):
     }), 200
 
 
-'''
-# 친구 팔로우
-@bp.route('/friends/follow/<int:friend_id>', methods=['GET'])
+# 친구 팔로우 요청하기
+@bp.route('/friends/follow/<int:friend_id>', methods=['POST'])
 @jwt_required()
-def get_friend_follow(friend_id):
-    return 0
+def post_request_follow(friend_id):
+    user_id = get_jwt_identity() 
     
+    if user_id == friend_id:
+        return jsonify({'message': 'It is impossible to follow yourself'}), 400
 
-# 게시물에 하트 - 범용적으로 친구, 다른 사람꺼도 되게 해야할 듯 일단?????
-@bp.route('/main/place_like/', methods=['GET'])
+    db = get_db()
+    cursor = db.cursor()
+
+    try:
+        # 이미 요청했거나 친구인지 확인
+        query = """
+            SELECT status FROM friend
+            WHERE member_id = %s AND friend_id = %s
+        """
+        cursor.execute(query, (user_id, friend_id))
+        existing_relation = cursor.fetchone()
+
+        if existing_relation:
+            return jsonify({'message': f"Already {existing_relation['status']} status"}), 409
+
+        # DB에 'waiting' 상태로 저장
+        sql_insert = """
+            INSERT INTO friend (member_id, friend_id, status, created_at) 
+            VALUES (%s, %s, 'waiting', NOW())
+        """
+        cursor.execute(sql_insert, (user_id, friend_id))
+        db.commit()
+
+        return jsonify({'message': 'Send follow', 'friend_id': friend_id}), 201
+
+    except Exception as e:
+        db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+
+# 친구 팔로우 수락하기
+@bp.route('/friends/access_follow/<int:friend_id>', methods=['POST'])
 @jwt_required()
-def get_place_like(friend_id):
-    return 0
-'''
+def post_accept_follow(friend_id):
+    user_id = get_jwt_identity()
+    
+    db = get_db()
+    cursor = db.cursor()
+
+    try:
+        # 상대방이 나에게 보낸 'waiting' 요청이 있는지 확인
+        # user_id가 요청한 사람(friend_id), friend_id가 나(user_id)여야 함
+        query = """
+            SELECT * FROM friend
+            WHERE member_id = %s AND friend_id = %s AND status = 'waiting'
+        """
+        cursor.execute(query, (friend_id, user_id))
+        request_exist = cursor.fetchone()
+
+        if not request_exist:
+            return jsonify({'message': 'There are no pending follow requests'}), 404
+
+        # 상태를 'friend'로 업데이트
+        cursor.execute("""
+            UPDATE friend
+            SET status = 'friend', updated_at = NOW()
+            WHERE member_id = %s AND friend_id = %s
+        """, (friend_id, user_id))
+
+        db.commit()
+
+        return jsonify({'message': 'Follow access', 'friend_id': friend_id}), 200
+
+    except Exception as e:
+        db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+    
+# 친구 팔로우 거절하기
+@bp.route('/friends/decline_follow/<int:friend_id>', methods=['GET'])
+@jwt_required()
+def get_decline_follow(friend_id):
+    user_id = get_jwt_identity()
+    
+    db = get_db()
+    cursor = db.cursor()
+
+    try:
+        query = """
+            DELETE FROM friend
+            WHERE member_id = %s AND friend_id = %s AND status = 'waiting'
+        """
+        cursor.execute(query, (friend_id, user_id))
+        db.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({'message': 'There are no pending follow requests'}), 404
+
+        return jsonify({
+            "message": "Declining follow success",
+            "friend_id": friend_id
+        }), 200
+
+    except Exception as e:
+        db.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+
+        if not user_id:
+          return jsonify({"message": "user_id required"}), 400
+
+# 게시물에 하트
+@bp.route('/main/place_like/<int:place_id>', methods=['POST'])
+@jwt_required()
+def post_place_like(place_id):
+    user_id = get_jwt_identity()
+    
+    place = Place.query.get(place_id)
+    if not place:
+        return jsonify({'message': 'Place not found'}), 404
+
+    try:
+        existing_like = PlaceLike.query.filter_by(userid_id=user_id, placeid_id=place_id).first()
+
+        if existing_like:
+            db.session.delete(existing_like)
+            db.session.commit()
+            return jsonify({'message': 'Unliked', 'status': False}), 200
+        else:
+            new_like = PlaceLike(userid_id=user_id, placeid_id=place_id)
+            db.session.add(new_like)
+            db.session.commit()
+            return jsonify({'message': 'Liked', 'status': True}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
