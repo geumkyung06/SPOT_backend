@@ -83,7 +83,7 @@ class KakaoMem(db.Model):
     
     email = db.Column(db.String(255), unique=True, nullable=False)
     
-    info = db.Column(db.Text) 
+    one_line = db.Column(db.String(255)) 
     
     kakao_id = db.Column(db.String(255), unique=True, nullable=False)
     nickname = db.Column(db.String(255), nullable=False) 
@@ -91,6 +91,7 @@ class KakaoMem(db.Model):
     password = db.Column(db.String(255)) 
     photo = db.Column(db.String(255)) 
     spot_nickname = db.Column(db.String(255))
+    spot_id = db.Column(db.String(255))
 
 
 # 6. friend table
