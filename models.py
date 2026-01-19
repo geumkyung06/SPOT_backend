@@ -117,3 +117,19 @@ class PlaceLike(db.Model):
     placeid_id = db.Column(db.BigInteger, nullable=False)
     userid_id = db.Column(db.BigInteger, nullable=False)
 
+# 8. comment
+class Comment(db.Model):
+    __tablename__ = 'comment'
+
+    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    content = db.Column(db.String(255))
+    user_id = db.Column(db.String(255)) 
+    
+    kakao_mem_id = db.Column(db.BigInteger) 
+    
+    place_id = db.Column(db.BigInteger, db.ForeignKey('place.id'))
+
+
