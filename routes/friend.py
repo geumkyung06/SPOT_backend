@@ -791,9 +791,9 @@ def post_accept_follow(friend_id):
         cursor.close()
     
 # 친구 팔로우 거절하기
-@bp.route('/friends/decline_follow/<int:friend_id>', methods=['GET'])
+@bp.route('/friends/decline_follow/<int:friend_id>', methods=['POST'])
 @jwt_required()
-def get_decline_follow(friend_id):
+def post_decline_follow(friend_id):
     """
     친구 팔로우 거절하기
     ---
