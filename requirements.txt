@@ -23,3 +23,6 @@ google.genai
 playwright
 beautifulsoup4
 aiohttp
+
+#async
+asgiref
