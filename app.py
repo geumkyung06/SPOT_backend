@@ -9,11 +9,13 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from flasgger import Swagger
 from flask_jwt_extended import JWTManager
+from services.browser import browser_service
+import asyncio
 
-# 1. 모델과 DB 객체 임포트
+# 모델과 DB 객체 임포트
 from models import db
 
-# 2. 라우트 임포트
+# 라우트 임포트
 from routes.instagram import bp as instagram_bp
 from routes.places import user_places_bp
 from routes.friend import bp as friend_bp
@@ -35,14 +37,43 @@ def create_app():
     # CORS 설정
     CORS(app, resources={r"*": {"origins": "*"}}) 
 
-    # [중요] 스웨거 초기화 (이게 없으면 Fetch Error 뜸)
-    app.config['SWAGGER'] = {
-        'title': 'Spot Extract API',
-        'uiversion': 3
+    swagger_config = {
+        "headers": [],
+        "specs": [
+            {
+                "endpoint": 'apispec_1',
+                "route": '/apispec_1.json',
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True,
+            }
+        ],
+        "static_url_path": "/flasgger_static",
+        "swagger_ui": True,
+        "specs_route": "/apidocs/"
     }
-    swagger = Swagger(app)
 
-    # 3. 데이터베이스 설정
+    template = {
+        "swagger": "2.0",
+        "info": {
+            "title": "Spot Extract API",
+            "description": "Instagram & Place API with JWT Authorization",
+            "version": "1.0.0"
+        },
+        "securityDefinitions": {
+            "Bearer": {
+                "type": "apiKey",
+                "name": "Authorization",
+                "in": "header",
+                "description": "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\""
+            }
+        },
+       
+        "security": [{"Bearer": []}] 
+    }
+
+    swagger = Swagger(app, config=swagger_config, template=template)
+
+    # 데이터베이스 설정
     db_host = os.getenv("DB_HOST")
     db_port = os.getenv("DB_PORT", "3306")
     db_user = os.getenv("DB_USER")
@@ -60,13 +91,18 @@ def create_app():
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['JSON_AS_ASCII'] = False 
 
-    # 4. DB 초기화
+    # DB 초기화
     db.init_app(app)
 
-    # 5. 블루프린트 등록
+    # 블루프린트 등록
     app.register_blueprint(instagram_bp)  
     app.register_blueprint(user_places_bp)
     app.register_blueprint(friend_bp)
+
+    @app.before_request
+    async def startup_browser():
+        if not browser_service.browser:
+            await browser_service.start()
 
     return app
 
@@ -74,7 +110,7 @@ if __name__ == '__main__':
     app = create_app()
     with app.app_context():
         try:
-            db.create_all()
+            db.create_all() # 나중에 flask-migra로 변경
             print("AWS RDS 연결 성공!")
         except Exception as e:
             print(f"DB 연결 실패: {e}")
