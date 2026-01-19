@@ -10,3 +10,17 @@ static/uploads/*
 !static/uploads/.gitkeep
 routes/instagram_re.py
 ocr_test.py
+api_history.csv
+oocr.py
+caption_ai.py
+caption_rulebase.py
+instagram copy.py
+user_service.py
+instagram_parser.py
+gemini.py
+gpt.py
+insta.py
+test.py
+upstage.py
+api.py
+downloaded_images
