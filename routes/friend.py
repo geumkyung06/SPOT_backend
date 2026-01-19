@@ -226,6 +226,7 @@ def post_friend_block(friend_id):
     ---
     tags:
       - Friend
+    summary: 특정 유저 차단 (기존 친구 관계여도 차단됨)
     security:
       - Bearer: []
     parameters:
@@ -233,11 +234,20 @@ def post_friend_block(friend_id):
         in: path
         type: integer
         required: true
+        description: 차단할 대상의 유저 ID
     responses:
       201:
         description: 차단 성공
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "User blocked successfully"
       409:
         description: 이미 차단된 사용자
+      500:
+        description: 서버 에러
     """
     user_id = get_jwt_identity()
 
@@ -259,15 +269,6 @@ def post_friend_block(friend_id):
         """
         cursor.execute(query, (user_id, friend_id))
 
-        # 2. 친구 목록(friend)에서 삭제되는것?은 아닌 듯????
-        '''
-        delete_query = """
-            DELETE FROM friend
-            WHERE (user_id = %s AND friend_id = %s) 
-               OR (user_id = %s AND friend_id = %s)
-        """
-        cursor.execute(delete_query, (user_id, friend_id, friend_id, user_id))
-        '''
         db.commit()
 
         return jsonify({"message": "User blocked successfully"}), 201
@@ -282,6 +283,32 @@ def post_friend_block(friend_id):
 @bp.route('/friends/unblock/<int:friend_id>', methods=['POST'])
 @jwt_required()
 def post_friend_unblock(friend_id):
+    """
+    친구 차단 해제하기
+    ---
+    tags:
+      - Friend
+    summary: 차단 해제하고 친구 관계 삭제
+    security:
+      - Bearer: []
+    parameters:
+      - name: friend_id
+        in: path
+        type: integer
+        required: true
+        description: 차단 해제할 대상의 유저 ID
+    responses:
+      200:
+        description: 차단 해제 및 관계 삭제 성공
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Unblocked and relationship deleted"
+      500:
+        description: 서버 에러
+    """
     user_id = get_jwt_identity()
 
     if not user_id:
@@ -625,6 +652,38 @@ def get_friend_comments(friend_id):
 @bp.route('/friends/follow/<int:friend_id>', methods=['POST'])
 @jwt_required()
 def post_request_follow(friend_id):
+    """
+    친구 팔로우 요청 보내기
+    ---
+    tags:
+      - Friend
+    summary: 다른 유저에게 팔로우 요청 보냄
+    security:
+      - Bearer: []
+    parameters:
+      - name: friend_id
+        in: path
+        type: integer
+        required: true
+        description: 팔로우를 요청할 상대방의 유저 ID
+    responses:
+      201:
+        description: 요청 성공 (waiting 상태 생성)
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Send follow"
+            friend_id:
+              type: integer
+      400:
+        description: 자기 자신을 팔로우할 수 없음
+      409:
+        description: 이미 요청했거나 친구 관계임
+      500:
+        description: 서버 에러
+    """
     user_id = get_jwt_identity() 
     
     if user_id == friend_id:
@@ -665,6 +724,37 @@ def post_request_follow(friend_id):
 @bp.route('/friends/access_follow/<int:friend_id>', methods=['POST'])
 @jwt_required()
 def post_accept_follow(friend_id):
+    """
+    친구 팔로우 수락하기
+    ---
+    tags:
+      - Friend
+    summary: 나에게 온 팔로우 요청 수락
+    description: friend_id에는 '나에게 요청을 보낸 사람'의 ID를 넣어야 함
+    security:
+      - Bearer: []
+    parameters:
+      - name: friend_id
+        in: path
+        type: integer
+        required: true
+        description: 요청을 보낸 사람의 유저 ID (Requester ID)
+    responses:
+      200:
+        description: 수락 성공
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Follow access"
+            friend_id:
+              type: integer
+      404:
+        description: 대기 중인 요청이 없음
+      500:
+        description: 서버 에러
+    """
     user_id = get_jwt_identity()
     
     db = get_db()
@@ -704,6 +794,36 @@ def post_accept_follow(friend_id):
 @bp.route('/friends/decline_follow/<int:friend_id>', methods=['GET'])
 @jwt_required()
 def get_decline_follow(friend_id):
+    """
+    친구 팔로우 거절하기
+    ---
+    tags:
+      - Friend
+    summary: 나에게 온 팔로우 요청 거절 (데이터 삭제)
+    security:
+      - Bearer: []
+    parameters:
+      - name: friend_id
+        in: path
+        type: integer
+        required: true
+        description: 요청을 보낸 사람의 유저 ID
+    responses:
+      200:
+        description: 거절 성공 (데이터 삭제됨)
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Declining follow success"
+            friend_id:
+              type: integer
+      404:
+        description: 대기 중인 요청이 없음
+      500:
+        description: 서버 에러
+    """
     user_id = get_jwt_identity()
     
     db = get_db()
@@ -738,6 +858,55 @@ def get_decline_follow(friend_id):
 @bp.route('/main/place_like/<int:place_id>', methods=['POST'])
 @jwt_required()
 def post_place_like(place_id):
+    """
+    장소 좋아요 토글 
+    ---
+    tags:
+      - Main
+    summary: 장소에 좋아요를 누르거나 취소
+    description: 이미 좋아요가 있다면 삭제(False)하고, 없다면 생성(True)
+    security:
+      - Bearer: []
+    parameters:
+      - name: place_id
+        in: path
+        type: integer
+        required: true
+        description: 좋아요를 누를 장소의 고유 ID
+    responses:
+      201:
+        description: 좋아요 성공 (Liked)
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Liked"
+            status:
+              type: boolean
+              example: true
+      200:
+        description: 좋아요 취소 성공 (Unliked)
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Unliked"
+            status:
+              type: boolean
+              example: false
+      404:
+        description: 해당 장소 ID가 존재하지 않음
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: "Place not found"
+      500:
+        description: 서버 내부 에러
+    """
     user_id = get_jwt_identity()
     
     place = Place.query.get(place_id)
