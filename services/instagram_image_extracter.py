@@ -1,11 +1,6 @@
-import asyncio
-import json
-import time
-import os
-import re
-import io
 from flask import request
-import aiohttp
+import json, os, re, io
+import asyncio, aiohttp
 from datetime import datetime
 from playwright.async_api import async_playwright
 from google import genai
@@ -133,19 +128,7 @@ def gemini_flash_ocr(image_path):
 # 비동기 처리
 async def safe_ocr(image_path):
     async with sem:
-        filename = os.path.basename(image_path)
-        
-        start = time.time()
-        start_str = datetime.now().strftime("%H:%M:%S.%f")[:-4]
-    
-        print(f"[Start] {start_str} | {filename} 분석 시작...")
         result = await asyncio.to_thread(gemini_flash_ocr, image_path)
-        
-        end = time.time()
-        end_str = datetime.now().strftime("%H:%M:%S.%f")[:-4]
-        duration = end - start
-
-        print(f"[End] {end_str} | {filename} 완료 ({duration:.2f}s)")
         
         return result
 
@@ -210,9 +193,7 @@ async def extract_insta_images(url=""):
     data = request.get_json()
     post_url = data.get('url')
     
-    try:
-        start_total = time.time()
-        
+    try:        
         print("이미지 추출 중...")
         image_urls = await extract_images(manager, post_url)
         print(f"{len(image_urls)}장 추출 완료")
@@ -233,17 +214,9 @@ async def extract_insta_images(url=""):
 
             # OCR 비동기 수행
             print(f"OCR 분석 시작 ({len(saved_files)}장)...")
-            ocr_start = time.time()
             
             ocr_tasks = [safe_ocr(filepath) for filepath in saved_files]
             ocr_results = await asyncio.gather(*ocr_tasks)
-            
-            ocr_end = time.time()
-            
-            print(f"OCR 처리 시간: {ocr_end - ocr_start:.2f}s")
-
-        end_total = time.time()
-        print(f"총 소요 시간: {end_total - start_total:.2f}s")
 
     finally:
         await manager.stop()
