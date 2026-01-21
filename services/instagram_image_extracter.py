@@ -16,22 +16,6 @@ SAVE_FOLDER = "downloaded_images"
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-ocr_config = types.GenerateContentConfig(
-    temperature=0.1,
-    response_mime_type="application/json",
-    response_schema={
-        "type": "ARRAY",
-        "items": {       
-            "type": "OBJECT",
-            "properties": {
-                "place": {"type": "STRING"},
-                "address": {"type": "STRING"}
-            },
-            "required": ["place", "address"]
-        }
-    }
-)
-
 # 동시 작업 제한(3)
 sem = asyncio.Semaphore(3)
 
@@ -77,8 +61,8 @@ def gemini_flash_ocr(image_path):
             response = client.models.generate_content(
             model='gemini-2.5-flash-lite',
             contents=[
-                "이 이미지에서 가게의 '상호명(name)'과 '주소(address)'를 식별해서 추출해줘.",
-                "만약 이미지에서 텍스트를 찾을 수 없거나, 해당 항목이 명확하지 않다면 억지로 만들지 말고 빈 문자열(\"\")로 채워.",
+                "이 이미지에서 가게의 '상호명(name)'과 '주소(address)'를 식별해서 추출해줘",
+                "만약 이미지에서 텍스트를 찾을 수 없거나, 해당 항목이 명확하지 않다면 억지로 만들지 말고 빈 문자열(\"\")로 채워",
                 img
             ],
             config=types.GenerateContentConfig(
@@ -90,11 +74,11 @@ def gemini_flash_ocr(image_path):
                         "properties": {
                             "name": {
                                 "type": "STRING", 
-                                "description": "가게 이름. 간판이나 로고에 있는 텍스트. 없으면 빈 문자열."
+                                "description": "가게 이름. 간판이나 로고에 있는 텍스트. 없으면 빈 문자열"
                             },
                             "address": {
                                 "type": "STRING", 
-                                "description": "도로명 주소 또는 지번 주소. 없으면 빈 문자열."
+                                "description": "도로명 주소 또는 지번 주소. 없으면 빈 문자열"
                             }
                         },
                         "required": ["name"] 
