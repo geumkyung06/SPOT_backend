@@ -133,4 +133,7 @@ class Comment(db.Model):
     
     place_id = db.Column(db.BigInteger, db.ForeignKey('place.id'))
 
+class SavedSeq(db.Model):
+    __tablename__ = 'saved_place_seq'
 
+    next_val = db.Column(db.BigIntenger, nullable=True)
