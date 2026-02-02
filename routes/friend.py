@@ -5,7 +5,7 @@ import random
 from flask import Blueprint, jsonify, request, g
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from models import db, PlaceLike, Place, Friend
+from models import db, PlaceLike, Place, Friend, KakaoMem
 
 bp = Blueprint('friend', __name__)
 
@@ -72,6 +72,14 @@ def get_friends_list():
                     updated_at:
                       type: string
                       description: 친구 추가/수정 일시
+                    mutual_count:
+                      type: integer
+                      description: 나와 해당 친구의 공통 친구 수
+                    mutual_profiles:
+                      type: array
+                      items:
+                      type: string
+                      description: 공통 친구 프로필 이미지 URL 리스트 (최대 3개, 최신순)
         500:
           description: 서버 에러
       """
@@ -98,12 +106,37 @@ def get_friends_list():
         ORDER BY f.updated_at DESC
     """
 
-    try:
-      # 전체 목록 조회
-      cursor.execute(query, (user_id,))
-      friends = cursor.fetchall()
+    query_mutual = """
+        SELECT k.photo
+        FROM friend f1
+        JOIN friend f2 ON f1.friend_id = f2.friend_id
+        JOIN kakao_mem k ON f1.friend_id = k.id
+        WHERE f1.member_id = %s        -- 나
+          AND f2.member_id = %s        -- 해당 친구
+          AND f1.status = 'friend'
+          AND f2.status = 'friend'
+        ORDER BY f1.updated_at DESC
+    """
 
-      return jsonify({'friends': friends}), 200
+    try:
+        # 전체 목록 조회
+        cursor.execute(query, (user_id,))
+        friends = cursor.fetchall()
+
+        for friend in friends:
+            target_friend_id = friend['friend_id']
+
+            # 공통 친구 확인
+            cursor.execute(query_mutual, (user_id, target_friend_id))
+            mutuals = cursor.fetchall() 
+
+            mutual_count = len(mutuals)
+            top_3_profiles = [m['photo'] for m in mutuals[:3]]
+
+            friend['mutual_count'] = mutual_count
+            friend['mutual_profiles'] = top_3_profiles
+
+        return jsonify({'friends': friends}), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
