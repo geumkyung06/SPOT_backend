@@ -5,7 +5,7 @@ from sqlalchemy.ext.compiler import compiles
 
 db = SQLAlchemy()
 
-# 👇 [추가 2] 이 함수를 추가하세요 (모델 클래스 정의하기 전에)
+'''
 @compiles(BigInteger, 'sqlite')
 def compile_big_int_sqlite(type_, compiler, **kw):
     """
@@ -13,7 +13,7 @@ def compile_big_int_sqlite(type_, compiler, **kw):
     AUTOINCREMENT가 정상 작동하도록 함
     """
     return 'INTEGER'
-
+'''
 # insta_url table
 class InstaUrl(db.Model):
     __tablename__ = 'insta_url'
