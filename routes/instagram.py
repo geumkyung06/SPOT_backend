@@ -8,7 +8,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 import re
 
 from services.instagram_text_parser import get_caption_no_login, split_caption, extract_places_with_gpt, is_place_post
-from services.instagram_image_extracter import safe_ocr, extract_images, process_download
+from services.instagram_image_extracter import global_browser_manager, extract_insta_images
 from services.check_place import process_places
 from services.browser import browser_service
 
@@ -349,6 +349,7 @@ async def check_caption_place( url=""):
         return [], ""
 
 async def check_ocr_place(url=""):
+
     if not url:
         return []
 
@@ -357,47 +358,22 @@ async def check_ocr_place(url=""):
         print(f"분석 요청: {url}")
 
         # 이미지 URL 추출
-        if not browser_service.browser:
-            # 혹시라도 꺼져있으면 비상 실행
-            await browser_service.start()
-            
-        image_urls = await extract_images(browser_service, url)
-        
-        if not image_urls:
+        if not global_browser_manager.browser:
+            await global_browser_manager.start()
+
+        final_places = await extract_insta_images(url)
+
+        if isinstance(final_places, dict) and "error" in final_places:
+            print(f"추출 실패: {final_places['error']}")
             return []
 
-        print(f"{len(image_urls)}개 이미지 추출")
-
-        if not os.path.exists(SAVE_FOLDER):
-            os.makedirs(SAVE_FOLDER)
-
-        # 다운로드 및 전처리
-        saved_files = []
-        connector = aiohttp.TCPConnector(limit=10)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            tasks = [process_download(session, url, i) for i, url in enumerate(image_urls)]
-            results = await asyncio.gather(*tasks)
-            saved_files = [r for r in results if r is not None]
-
-        if not saved_files:
+        if not final_places:
+            print("추출된 장소 정보가 없습니다.")
             return []
-
-        # OCR 수행
-        ocr_tasks = [safe_ocr(filepath) for filepath in saved_files[:5]] # 일단 5장만
-        ocr_results_list = await asyncio.gather(*ocr_tasks)
-
-        # 결과 필터링 및 병합
-        final_places = []
-        for res in ocr_results_list:
-            if isinstance(res, list):
-                final_places.extend(res)
-            elif isinstance(res, dict) and "error" not in res:
-                # 에러가 아닌 단일 객체인 경우 (구조에 따라 다름)
-                final_places.append(res)
 
         # OCR은 돌렸는데 텍스트가 하나도 안 나온 경우
         if not final_places:
-             return []
+            return []
 
         end_total = time.time()
         total_time = end_total - start_total
@@ -407,7 +383,7 @@ async def check_ocr_place(url=""):
     except Exception as e:
         print(f"서버 에러: {e}")
         return []
-
+    
 def save_places_to_db(new_places = []): 
     try :
         for p_info in new_places:
