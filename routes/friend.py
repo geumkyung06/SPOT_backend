@@ -595,6 +595,7 @@ def get_friend_comments(friend_id):
 
     order_by = "c.id DESC" 
 
+    # user_id 삭제함
     query = f"""
         SELECT 
             c.id AS comment_id,

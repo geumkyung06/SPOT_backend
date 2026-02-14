@@ -6,16 +6,18 @@ from playwright.async_api import async_playwright
 from google import genai
 from google.genai import types
 from PIL import Image
+import boto3
 
+s3 = boto3.client('s3')
+BUCKET_NAME = "spottests"
 # 설정
-SAVE_FOLDER = "downloaded_images"
-os.makedirs(SAVE_FOLDER, exist_ok=True)
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 sem = asyncio.Semaphore(3) # OCR 동시 요청 제한
 
-# --- [1. 브라우저 매니저 클래스 (최적화 버전)] ---
+# 브라우저 매니저
 class BrowserManager:
     def __init__(self):
         self.playwright = None
@@ -51,8 +53,8 @@ class BrowserManager:
 global_browser_manager = BrowserManager()
 
 
-# --- [2. 이미지 처리 함수 (속도 최적화 적용)] ---
-def crop_and_save_image(image_data, filepath, cut_height=250):
+# 이미지 처리
+def crop_and_save_image(image_data, cut_height=250):
     try:
         with Image.open(io.BytesIO(image_data)) as img:
             w, h = img.size
@@ -75,24 +77,26 @@ def crop_and_save_image(image_data, filepath, cut_height=250):
             img = img.convert("L")
 
             # 4. 저장 (optimize=False로 저장 속도 확보)
-            img.save(filepath, format='JPEG', quality=50)
+            output_buffer = io.BytesIO()
+            img.save(output_buffer, format='JPEG', quality=50)
+            output_buffer.seek(0) # 포인터 초기화
             
-            return filepath
+            return output_buffer, img
 
     except Exception as e:
         print(f"이미지 처리 에러: {e}")
         return None
 
 
-# --- [3. 크롤링 로직 (리소스 차단 및 타임아웃 단축)] ---
+# 크롤링 로직 (리소스 차단 및 타임아웃 단축)
 async def extract_images(browser_manager: BrowserManager, post_url: str):
     ordered_images = [] 
     seen_urls = set()
 
-    # 이미 켜져 있는 context에서 '탭'만 새로 엶 (매우 빠름)
+    # 이미 켜져 있는 context에서 '탭'만 새로 엶
     page = await browser_manager.context.new_page()
 
-    # 이미지, 폰트, 미디어 차단 (속도 향상)
+    # 이미지, 폰트, 미디어 차단
     await page.route("**/*", lambda route: 
         route.abort() if route.request.resource_type in ["image", "media", "font", "stylesheet"] 
         else route.continue_()
@@ -136,56 +140,67 @@ async def extract_images(browser_manager: BrowserManager, post_url: str):
     return ordered_images
 
 
-# --- [4. 다운로드 및 OCR (기존 로직 유지)] ---
+# 다운로드
 async def process_download(session, url, index):
-    # 파일명 생성 로직 (기존 유지)
     pattern = r'/(?:p|reel)/([^/?]+)'
     match = re.search(pattern, url)
     shortcut = match.group(1) if match else f"unknown_{uuid.uuid4().hex[:8]}"
-
     filename = f"image_{shortcut}_{index+1}.jpg"
-    filepath = os.path.join(SAVE_FOLDER, filename)
+    
+    s3_key = f"places/ocr_images/{filename}" 
     
     try:
         async with session.get(url) as response:
             if response.status == 200:
                 data = await response.read()
-                # 비동기 스레드로 이미지 변환
-                path = await asyncio.to_thread(crop_and_save_image, data, filepath, cut_height=150)
-                return path
+                
+                byte_buffer, pil_image = await asyncio.to_thread(crop_and_save_image, data, 150)
+
+                if not byte_buffer: return None, None
+                
+                def upload_s3():
+                    s3.put_object(
+                        Bucket=BUCKET_NAME,
+                        Key=s3_key,
+                        Body=byte_buffer,
+                        ContentType='image/jpeg'
+                    )
+                await asyncio.to_thread(upload_s3)
+                
+                async with sem:
+                    ocr_result = await asyncio.to_thread(gemini_flash_ocr, pil_image)
+
+                return ocr_result, s3_key
+
     except Exception as e:
-        print(f"다운로드 에러: {e}")
-    return None
+        print(f"개별 처리 에러: {e}")
+        return None, s3_key # 에러나도 키는 반환해서 삭제 시도
 
-def gemini_flash_ocr(image_path):
-    # ... (기존 Gemini OCR 코드와 100% 동일) ...
-    if not os.path.exists(image_path):
-        return {"error": "이미지 파일이 없습니다."}
-
+def gemini_flash_ocr(pil_image):
     try:
-        with Image.open(image_path) as img:
-            response = client.models.generate_content(
-            model='gemini-2.5-flash-lite',
-            contents=[
-                "이 이미지에서 가게의 '상호명(name)'과 '주소(address)'를 식별해서 추출해줘",
-                "만약 이미지에서 텍스트를 찾을 수 없거나, 해당 항목이 명확하지 않다면 억지로 만들지 말고 빈 문자열(\"\")로 채워",
-                img
-            ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json", 
-                response_schema={
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "name": {"type": "STRING", "description": "가게 이름. 없으면 빈 문자열"},
-                            "address": {"type": "STRING", "description": "도로명/지번 주소. 없으면 빈 문자열"}
-                        },
-                        "required": ["name"] 
-                    }
+ 
+        response = client.models.generate_content(
+        model='gemini-2.5-flash-lite',
+        contents=[
+            "이 이미지에서 가게의 '상호명(name)'과 '주소(address)'를 식별해서 추출해줘",
+            "만약 이미지에서 텍스트를 찾을 수 없거나, 해당 항목이 명확하지 않다면 억지로 만들지 말고 빈 문자열(\"\")로 채워",
+            pil_image
+        ],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json", 
+            response_schema={
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "name": {"type": "STRING", "description": "가게 이름. 없으면 빈 문자열"},
+                        "address": {"type": "STRING", "description": "도로명/지번 주소. 없으면 빈 문자열"}
+                    },
+                    "required": ["name"] 
                 }
-            )
+            }
         )
+    )
         data = json.loads(response.text)
         
         valid_data = [item for item in data if item.get('name') and item['name'].strip() != ""]
@@ -204,13 +219,7 @@ def gemini_flash_ocr(image_path):
     except Exception as e:
         return {"error": f"에러 발생: {str(e)}"}
 
-async def safe_ocr(image_path):
-    async with sem:
-        result = await asyncio.to_thread(gemini_flash_ocr, image_path)
-        return result
-
-
-# --- [5. 메인 핸들러 (통합)] ---
+# 메인
 async def extract_insta_images(url=""):
     # [중요] 전역 브라우저 매니저 사용
     # 처음 실행될 때만 start()가 작동하고, 이후에는 무시됨 (Warm Start 효과)
@@ -227,6 +236,7 @@ async def extract_insta_images(url=""):
         pass # Flask context 밖에서 실행될 경우 대비
 
     ocr_results = []
+    keys_to_delete = [] # 삭제할 파일 목록
     
     try:        
         print(f"이미지 추출 시작: {target_url}")
@@ -234,31 +244,37 @@ async def extract_insta_images(url=""):
         image_urls = await extract_images(global_browser_manager, target_url)
         print(f"{len(image_urls)}장 URL 확보 완료")
 
-        saved_files = []
         if image_urls:
             print("이미지 다운로드 및 변환 중...")
             connector = aiohttp.TCPConnector(limit=10)
             async with aiohttp.ClientSession(connector=connector) as session:
                 tasks = [process_download(session, url, i) for i, url in enumerate(image_urls)]
                 results = await asyncio.gather(*tasks)
-                saved_files = [r for r in results if r is not None]
-
-            print(f"OCR 분석 시작 ({len(saved_files)}장)...")
-            ocr_tasks = [safe_ocr(filepath) for filepath in saved_files]
             
             # 2차원 리스트([[{},{}], [{},{}]])를 1차원으로 평탄화
-            nested_results = await asyncio.gather(*ocr_tasks)
-            for res in nested_results:
-                if isinstance(res, list):
-                    ocr_results.extend(res)
-                elif isinstance(res, dict) and "error" not in res:
-                    ocr_results.append(res)
+            for res, s3_key in results:
+                if s3_key:
+                        keys_to_delete.append(s3_key)
+                
+                if res:
+                    if isinstance(res, list):
+                        ocr_results.extend(res)
+                    elif isinstance(res, dict) and "error" not in res:
+                        ocr_results.append(res)
 
     except Exception as e:
         print(f"전체 프로세스 에러: {e}")
         return {"error": str(e)}
     
-    # finally 블록에서 browser.stop()을 제거했습니다!
-    # 그래야 브라우저가 계속 살아있어서 다음 요청 때 빠릅니다.
+    finally:
+        if keys_to_delete:
+            print(f"S3 임시 파일 {len(keys_to_delete)}개 삭제 중...")
+            try:
+                delete_payload = {'Objects': [{'Key': k} for k in keys_to_delete]}
+                await asyncio.to_thread(s3.delete_objects, Bucket=BUCKET_NAME, Delete=delete_payload)
+            except Exception as e:
+                print(f"S3 삭제 실패: {e}")
     
     return ocr_results
+
+

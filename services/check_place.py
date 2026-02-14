@@ -5,13 +5,14 @@ import time
 import uuid
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import quote_plus
+import boto3
+
+s3 = boto3.client('s3')
 
 SEARCH_CLIENT_ID = os.getenv("NAVER_CLIENT_ID")
 SEARCH_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET")
 PLACE_API_KEY = os.getenv("PLACE_API_KEY")
 
-SAVE_DIR = "static/uploads"
-os.makedirs(SAVE_DIR, exist_ok=True)
 # 구글 API 엔드포인트
 GOOGLE_TEXTSEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
 GOOGLE_PHOTO_URL = "https://maps.googleapis.com/maps/api/place/photo"
@@ -55,11 +56,9 @@ def _map_google_category(google_types: list) -> str:
     # 9. 기타
     return "etc"
 
-def _download_google_photo(photo_reference: str) -> Optional[str]:
+def _download_google_photo(shortcut, photo_reference: str) -> Optional[str]:
     """구글 포토 Reference로 이미지 다운로드 및 저장"""
     if not PLACE_API_KEY: return None
-
-    params = {}
 
     try:
         params = {
@@ -70,17 +69,22 @@ def _download_google_photo(photo_reference: str) -> Optional[str]:
         r = requests.get(GOOGLE_PHOTO_URL, params=params, timeout=10)
         r.raise_for_status()
 
-        filename = f"place_{uuid.uuid4()}.jpg"
-        filepath = os.path.join(SAVE_DIR, filename)
+        filename = f"{shortcut}_{uuid.uuid4()}.jpg"
+        bucket_name = "spottests"
+        s3_key = f"places/{filename}" 
 
-        with open(filepath, "wb") as f:
-            f.write(r.content)
-            
-        return f"/{SAVE_DIR}/{filename}"
-
+        s3.put_object(
+        Bucket=bucket_name,
+        Key=s3_key,
+        Body=r.content,
+        ContentType='image/jpeg' # 브라우저에서 바로 보이도록 설정
+    )
+        return f"https://{bucket_name}.s3.ap-northeast-2.amazonaws.com/{s3_key}"
+    
     except Exception as e:
         print(f"[Photo Download Error] {e}")
         return None
+
 
 def _search_naver_local(query: str) -> dict: # 쿼리 ex) 서울(성수) 진사천훠궈 
     """네이버 지역 검색 (한국어 상호명/주소 검증용)"""
@@ -101,7 +105,7 @@ def _search_naver_local(query: str) -> dict: # 쿼리 ex) 서울(성수) 진사�
         pass
     return {}
 
-def _fetch_google_details(name: str, address: str) -> dict:
+def _fetch_google_details(name: str, address: str, shortcut) -> dict:
     """
     구글 검색으로 모든 정보(좌표, 카테고리, 평점, 리뷰수, 사진) 가져오기
     """
@@ -158,19 +162,18 @@ def _fetch_google_details(name: str, address: str) -> dict:
             for photo in photo_list:
                 ref = photo.get("photo_reference")
                 if ref:
-                    path = _download_google_photo(ref)
+                    path = _download_google_photo(shortcut, ref)
                     if path:
                         saved_paths.append(path)
             
             result_data["photos"] = saved_paths
-            print(f"photo_ref: {result_data}")
             
     except Exception as e:
         print(f"[Google Details Error] {e}")
 
     return result_data
 
-def process_places(place_queries: list[str]) -> list[dict]: # [[name, address], [name, address]...]
+def process_places(place_queries: list[str], shortcut) -> list[dict]: # [[name, address], [name, address]...]
     """
     입력된 장소명 리스트를 받아 네이버 검증 -> 구글 상세정보 병합 후 최종 데이터 반환
     """
@@ -200,7 +203,7 @@ def process_places(place_queries: list[str]) -> list[dict]: # [[name, address], 
         print(f"  -> 네이버 확인: {road_name} ({road_addr})")
 
         # 2. 구글 통합 검색 (좌표, 카테고리, 평점, 리뷰, 사진)
-        google_data = _fetch_google_details(road_name, road_addr)
+        google_data = _fetch_google_details(road_name, road_addr, shortcut)
         
         raw_photos = google_data.get("photos", [])
         # 3. 데이터 병합

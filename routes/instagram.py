@@ -24,7 +24,6 @@ SAVE_FOLDER = "downloaded_images"
 
 # 게시물 분석 후 장소 정보와 이미지를 DB에 저장 및 유저 화면에 반환
 @bp.route('/analyze', methods=['POST'])
-@jwt_required()
 async def analyze_instagram():
     """
     인스타그램 게시물 URL 분석 및 장소 추출
@@ -125,11 +124,7 @@ async def analyze_instagram():
             message:
               type: string
     """
-    user_id = get_jwt_identity() 
-    
-    print(f"로그인한 유저 ID: {user_id}")
-    if not user_id:
-        return jsonify({'status':'failed', 'message': 'login need'}), 400
+
     try:
         data = request.get_json()
         url = data.get('url') # 프론트한테서 받아옴
@@ -434,7 +429,7 @@ def save_places_to_db(new_places = []):
                 )
                 db.session.add(place)
                 db.session.flush()  # flush를 해야 place.id가 생성됨
-
+                
                 print(f"[DB] Place saved (ID: {place.id})")
         db.session.commit()
     except Exception as e:
