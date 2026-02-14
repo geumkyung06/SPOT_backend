@@ -5,6 +5,7 @@ Flask-CORS
 flask_jwt_extended
 flasgger
 gunicorn
+boto3
 
 # Database Drivers
 PyMySQL
